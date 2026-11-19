@@ -1,0 +1,7 @@
+CompileFlags:
+  Add:
+    - -isysteml:\Keil_v5\ARM\ARMCLANG/include
+    - -isysteml:\Keil_v5\ARM\ARMCLANG/include/libcxx
+  Remove: []
+  CompilationDatabase: ./build/nor_sdram_zf_dtcm
+  Compiler: l:\Keil_v5\ARM\ARMCLANG\bin\armclang.exe

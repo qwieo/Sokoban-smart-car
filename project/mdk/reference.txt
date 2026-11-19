@@ -1,0 +1,222 @@
+#include "zf_common_headfile.h"
+#include "vofa.h"
+#include "motor&motion.h"
+#include "filter.h"
+#include "math.h"
+
+float gyroz ,dgyroz;
+float L_gyro_z,new_gyro_z;
+int main(void)
+{
+  clock_init(SYSTEM_CLOCK_600M);  // 不可删除
+	system_delay_ms(300);
+	
+	wireless_uart_init();
+    // 此处编写用户代码 例如外设初始化代码等
+	imu963ra_init();
+	interrupt_set_priority(PIT_IRQn,5);
+	pit_ms_init(PIT_CH3,5);
+	
+	encoder_init();
+	Motor_Init();
+	ips200_init(IPS200_TYPE_SPI);
+    // 此处编写用户代码 例如外设初始化代码等
+  while(1)
+  {
+		  mecanum_basic(1,0,0);
+//		int temp=(int)PidIncCtrl(&w1,M1,0);
+//		if (temp>=0)
+//		{	pwm_set_duty(mo1_d,temp);
+//			pwm_set_duty(mo1_r,0);	
+//		}
+//		else
+//		{
+//			pwm_set_duty(mo1_r,-temp);
+//			pwm_set_duty(mo1_d,0);
+//		}
+//		pwm_set_duty(mo2_d,(int)PidIncCtrl(&w2,M2,5));
+//		pwm_set_duty(mo3_d,(int)PidIncCtrl(&w3,M3,5));
+//		pwm_set_duty(mo4_d,(int)PidIncCtrl(&w4,M4,5));
+        // 此处编写需要循环执行的代码
+//		JF_Data.data[0] = M1;
+//		JF_Data.data[1] = M2;
+//		JF_Data.data[2] = M3;
+//		JF_Data.data[3] = M4;
+//		JustFloat_Send();
+		system_delay_ms(5);
+        // 此处编写需要循环执行的代码
+  }
+}
+uint8_t lfsr = 0x7F;
+
+float Generate_PRBS_Signal(float mean_val, float amplitude) {
+    
+    uint8_t bit = ((lfsr >> 6) ^ (lfsr >> 5)) & 1;
+    lfsr = ((lfsr << 1) | bit) & 0x7F;
+    if (bit) return mean_val + amplitude;
+    else     return mean_val - amplitude;
+}
+void PIT_IRQHandler(void)
+{
+	#if 0
+    if(pit_flag_get(PIT_CH0))
+    {
+				
+        pit_flag_clear(PIT_CH0);
+    }
+    
+    if(pit_flag_get(PIT_CH1))
+    {
+        pit_flag_clear(PIT_CH1);
+    }
+    
+    if(pit_flag_get(PIT_CH2))
+    {
+        pit_flag_clear(PIT_CH2);
+    }
+   #endif
+    if(pit_flag_get(PIT_CH3))
+    {
+      pit_flag_clear(PIT_CH3);
+			get_encoder();
+			L_gyro_z = dgyroz;
+			imu963ra_get_gyro();
+			new_gyro_z=-imu963ra_gyro_transition(imu963ra_gyro_z)+0.4195;
+			dgyroz = LowPass_gyro(new_gyro_z, L_gyro_z);
+			if(fabs(dgyroz)>0.15)
+				gyroz+=(dgyroz*0.005)*PI/180.f;
+		#if 1
+		static int tick = 0;
+    static float u_prbs = 0; 
+    if (++tick >= 2) {
+        tick = 0;
+        u_prbs = Generate_PRBS_Signal(0, 0.09f); 
+    }
+    
+    JF_Data.data[0] = u_prbs;
+		JF_Data.data[1] = gyroz; 
+		JustFloat_Send();
+		update_odometry_counter_clockwise(M1,M2,M3,M4,0);
+		mecanum_cascade_control(0, 0, u_prbs, 
+                            robot_pos.y, robot_pos.x,gyroz);
+//		if (u_prbs>=0)
+//		{	pwm_set_duty(mo1_d,u_prbs);
+//			pwm_set_duty(mo1_r,0);	
+//		}
+//		else
+//		{
+//			pwm_set_duty(mo1_r,-u_prbs);
+//			pwm_set_duty(mo1_d,0);
+//		}
+		#endif	
+//			JF_Data.data[0] = M1;
+//			JF_Data.data[1] = M2;
+//			JF_Data.data[2] = M3;
+//			JF_Data.data[3] = M4;
+//			JustFloat_Send();    
+		
+    }
+
+    __DSB();
+}
+
+
+
+#include "zf_common_headfile.h"
+#include "vofa.h"
+#include "motor&motion.h"
+#include "filter.h"
+#include "math.h"
+#include "game.h"
+float gyroz ,dgyroz;
+float L_gyro_z,new_gyro_z;
+int32 dd;
+uint8_t cmd;
+
+int main(void)
+{
+  clock_init(SYSTEM_CLOCK_600M);  // 不可删除
+	system_delay_ms(300);
+	
+	wireless_uart_init();
+    // 此处编写用户代码 例如外设初始化代码等
+	imu963ra_init();
+	encoder_init();
+	interrupt_set_priority(PIT_IRQn,5);
+	pit_ms_init(PIT_CH3,5);
+	interrupt_global_enable(0);	
+	Motor_Init();
+	ips200_init(IPS200_TYPE_SPI);
+    // 此处编写用户代码 例如外设初始化代码等
+  while(1)
+  {
+
+//		switch(flag)
+//		{
+//			case 0: 
+//				mecanum_basic(0,0,PidLocCtrl(&gyro,gyroz,0));
+//				break;
+//			case 1: 
+//				mecanum_basic(2,0,PidLocCtrl(&gyro,gyroz,0));
+//				break;
+//			case 2: 
+//				mecanum_basic(-2,0,PidLocCtrl(&gyro,gyroz,0));
+//				break;
+//			case 3: 
+//				dd=0;
+//				break;
+//		}
+		ips200_show_float(0,0,target_y,3,3);
+		system_delay_ms(5);
+//		JF_Data.data[0] =robot_pos.x;
+//		JF_Data.data[1] =robot_pos.y;
+//		JF_Data.data[2] =dd;
+//		JustFloat_Send();
+        // 此处编写需要循环执行的代码
+  }
+}
+
+
+void PIT_IRQHandler(void)
+{
+		if(pit_flag_get(PIT_CH0))
+    {		
+      pit_flag_clear(PIT_CH0);
+			
+    }
+		
+		
+		
+    if(pit_flag_get(PIT_CH3))
+    {
+      pit_flag_clear(PIT_CH3);
+			dd+=get_encoder();
+			L_gyro_z = dgyroz;
+			imu963ra_get_gyro();
+			new_gyro_z=-imu963ra_gyro_transition(imu963ra_gyro_z)+0.4195;
+			dgyroz = LowPass_gyro(new_gyro_z, L_gyro_z);
+			if(fabs(dgyroz)>0.15)
+				gyroz+=(dgyroz*0.005)*PI/180.f;
+			update_odometry_counter_clockwise(M1,M2,M3,M4,gyroz);
+			mecanum_cascade_control(target_y, target_x, target_angle, 
+                            robot_pos.y,robot_pos.x, gyroz);
+    }
+
+    __DSB();
+}
+void LPUART8_IRQHandler(void)
+{
+    if(kLPUART_RxDataRegFullFlag & LPUART_GetStatusFlags(LPUART8))
+    {
+        if(kLPUART_RxDataRegFullFlag & LPUART_GetStatusFlags(LPUART8))
+    {
+        
+        uart_query_byte(UART_8,&cmd);
+				Parse_And_Update_Target(cmd);
+				wireless_module_uart_handler();
+		}
+				
+    }
+        
+    LPUART_ClearStatusFlags(LPUART8, kLPUART_RxOverrunFlag);    // 不允许删除
+}

@@ -103,4 +103,7 @@ void plan_bomb_phase3(char map3[12][16]);
 void plan_explore_phase3(char map3[12][16]);
 void plan_push_phase3(char map3[12][16]);
 
+/* Reset all public and staged level-3 planner state. */
+void level3_reset3(void);
+
 #endif

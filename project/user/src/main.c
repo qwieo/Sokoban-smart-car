@@ -1,51 +1,12 @@
-/* ======================================================================
- * >> 项目整体与启动流程（main.c）
- * 【面试问答】
- * Q1: 请整体介绍一下这个项目。
- * A: 这是一个基于 NXP i.MX RT1064（Cortex-M7，主频 600MHz，逐飞开源库 + Keil MDK）的
- * A: 四轮麦克纳姆轮推箱子机器人，共三个关卡、难度递增。RT1064 经 UART1 与上位机/AI
- * A: 板交互（接收 12x16 地图、目标点和过关等标志，回传动作指令），经 UART4 与识别
- * A: 模块交互获取箱子种类。软件分三层：5ms 定时中断跑实时感知与闭环；主循环跑关卡
- * A: 状态机与通信；菜单 + Flash 负责现场调参与参数掉电保存。
- * ----------------------------------------------------------------------
- * Q1: 上电后的完整启动流程是什么？
- * A: 时钟配到 600MHz -> OLED/按键/蜂鸣器初始化 -> IMU 静止校准（安装倾角 + 陀螺零偏）
- * A: -> Flash 读回上次参数 -> 进入菜单调参，退出时写 Flash -> 初始化编码器、电机、
- * A: 双串口、位置融合与模糊控制器，启动 5ms 周期中断 -> 主循环状态机按关卡运行。
- * ----------------------------------------------------------------------
- * Q1: 为什么不使用 RTOS？
- * A: 任务数量少、实时性要求明确：一个固定 200Hz 的闭环加一个非实时状态机。裸机中断
- * A: + 状态机占用资源小、时序可预测、调试简单；上 RTOS 反而带来调度抖动、栈空间和
- * A: 优先级管理的额外复杂度。
- * ----------------------------------------------------------------------
- * Q1: 主循环和中断如何分工？
- * A: 中断只做严格周期、耗时确定的事：读编码器/陀螺、姿态解算、位置融合、位置/航向/
- * A: 轮速三级控制、更新 PWM；主循环做地图解析、推箱子求解、串口收发应答、关卡切换等
- * A: 非实时逻辑。共享标志用 volatile，主循环不能阻塞中断。
- * ----------------------------------------------------------------------
- * Q1: 系统里有哪些周期任务？
- * A: PIT_CH0 每 10ms 按键扫描消抖；PIT_CH3 每 5ms 跑完整控制环（200Hz）；串口数据
- * A: 由接收中断异步处理；OLED 只在按键事件时局部刷新。
- * ----------------------------------------------------------------------
- * Q1: 怎么保证控制环的实时性？
- * A: 硬件 PIT 中断触发，优先级低于串口接收（避免丢字节）、高于普通任务；中断内禁止
- * A: delay 和串口打印等阻塞操作；浮点用 M7 硬件 FPU；中断末尾 __DSB 保证外设写入完成。
- * ----------------------------------------------------------------------
- * ====================================================================== */
+
+
 #include "zf_common_headfile.h"
 #include "vofa.h"
 #include "motor&motion.h"
 #include "filter.h"
 #include "math.h"
 #include "game.h"
-#include "sokoban_types1.h"
-#include "sokoban_solver1.h"
-#include "sokoban_types2.h"
-#include "sokoban_solver2.h"
-#include "sokoban_types3.h"
-#include "sokoban_solver3.h"
-#include "sokoban_map1.h"
-#include "sokoban_workspace.h"
+#include "sokoban.h"
 #include <stdio.h>
 #include "stdlib.h"
 #include "art.h"
@@ -101,39 +62,8 @@ void PositionControl_Init(void)
     FuzzyPosPD_Init(&fuzzy_y,FUZZY_AXIS_Y);
 }
 
-void update_map2(void)
-{
-	for (int i = 0; i < expected_cnt2; i++) 
-	{
-			int tx = expected_targets2[i].x;
-			int ty = expected_targets2[i].y;
-			map_strings[ty][tx] = vision_stream[i];
-	}
-}
 
-void update_map3(void)
-{
-	for (int i = 0; i < expected_cnt3; i++) 
-	{
-			int tx = expected_targets3[i].x;
-			int ty = expected_targets3[i].y;
-			map_strings[ty][tx] = vision_stream[i];
-	}
-}
 
-/* ======================================================================
- * >> 指令发送协议
- * 【面试问答】
- * Q1: Polling_transmit 的帧格式是什么？为什么字节间延时 100us？
- * A: 帧头 0xFF + 命令字符串 + CRC8 + 帧尾 0xFE。字节间加 100us 间隔是配合对端的接收
- * A: 处理能力、降低连续发送丢字节概率；CRC8 保证命令传错不会被执行。
- * ----------------------------------------------------------------------
- * Q1: while(cmd_received) 阻塞发送的风险？
- * A: 这是停等式发送：发一帧等对端应答（cmd_received 被清零）才继续，期间 5ms 控制
- * A: 中断照常运行，小车安全。风险是对端宕机会永久死等，工程上应加超时计数后退出并
- * A: 报警。
- * ----------------------------------------------------------------------
- * ====================================================================== */
 void Polling_transmit(char * commands)
 {
 	uart_write_byte(UART_1,255);
@@ -146,14 +76,8 @@ void Polling_transmit(char * commands)
 	uart_write_byte(UART_1,254);
 }
 
-/* ======================================================================
- * >> 位置估计任务
- * 【面试问答】
- * Q1: 位置估计任务做了什么？
- * A: 先用编码器和航向做里程计递推（高频短时预测）；当摄像头产生新一帧绝对位置时做
- * A: 一次融合校正（低频纠偏），输出 estimated_x/y 给位置环。
- * ----------------------------------------------------------------------
- * ====================================================================== */
+
+
 void PositionEstimator_Task_5ms(void)
 {
     /*
@@ -190,14 +114,8 @@ void Gyro_SetBiasTemperature(float temperature)
     gyro_bias_temperature = temperature;
 }
 
-/* ======================================================================
- * >> 陀螺仪温度补偿
- * 【面试问答】
- * Q1: 陀螺温度补偿的原理？
- * A: 陀螺零偏随温度变化。先记录基准温度，实验拟合三轴零偏-温度系数 Kx/Ky/Kz；运行
- * A: 时按 bias = K*(T-T0) 计算当前零偏并从角速度中扣除，抑制长时间温漂。
- * ----------------------------------------------------------------------
- * ====================================================================== */
+
+
 void Gyro_TemperatureCompensate(float temperature,
                                 float *gx, float *gy, float *gz)
 {
@@ -221,14 +139,8 @@ static void buzzer_note(uint32_t freq, uint32_t time_ms)
     system_delay_ms(time_ms * 15 / 100);
 }
 
-/* ======================================================================
- * >> 蜂鸣器音乐
- * 【面试问答】
- * Q1: 蜂鸣器如何播放音乐？
- * A: 无源蜂鸣器用 PWM 驱动：音符音高对应 PWM 频率（频率表按十二平均律标定），音符
- * A: 时值对应发声时长；每个音符 95% 时间发声、5% 静音形成断奏，音符之间清晰可分。
- * ----------------------------------------------------------------------
- * ====================================================================== */
+
+
 void buzzer_fur_elise(void)
 {
     buzzer_note(659, 140);    // E5
@@ -741,19 +653,8 @@ int main(void)
 //		{
 //			position_fusion.camera_enable = 1;
 //		}
-		/* ======================================================================
-		 * >> 主状态机与识别策略
-		 * 【面试问答】
-		 * Q1: 主状态机是怎么组织的？
-		 * A: 两层 switch：外层 Game_level 是关卡（Game1/2/3），内层 Game_phase 是阶段（Idle
-		 * A: 收图与规划、Explore 探索识别、Feedback 应答、Upload 回填地图并规划推箱、Start_push
-		 * A: 执行、Completed 清场进下一关）。
-		 * ----------------------------------------------------------------------
-		 * Q1: 为什么识别次数是 2*箱子数-1？
-		 * A: 每个箱子要从两个相对方向各识别一次做交叉验证，防止遮挡和朝向造成误识别；N 个
-		 * A: 箱子共 2N 个方向，初始方向无需识别，所以是 2N-1 次。
-		 * ----------------------------------------------------------------------
-		 * ====================================================================== */
+		
+
 		switch (Game_level)
 		{
 			case Game1:
@@ -763,12 +664,12 @@ int main(void)
 						level_passed=0;
 						while(!frame_ready);
 						update_map_from_uart(map_strings,uart_buffer);
-						parse_map_with_vision1(map_strings);
-						solve_sokoban1();
+						sokoban_plan(SOKOBAN_LEVEL_1, SOKOBAN_STAGE_PREPARE, map_strings);
+						
 						cmd_received=1;
 						while(cmd_received)
 						{
-							Polling_transmit(final_commands1);
+							Polling_transmit(sokoban_commands(SOKOBAN_LEVEL_1, SOKOBAN_STAGE_PREPARE));
 						}
 						Game_phase=Start_push;
 						break;
@@ -783,7 +684,7 @@ int main(void)
 						Game_level=Game2;
 						frame_ready=0;
 						Game_phase=Idle;
-						clear_sokoban_memory1();
+						sokoban_reset(SOKOBAN_LEVEL_1);
 						break;
 					default :
 						Game_phase=Idle;
@@ -810,26 +711,15 @@ int main(void)
 					locked = 0;
 					art1sendvariety = 0;
 					regpoint = 0;
-					/* ======================================================================
-					 * >> 第二关 探索-识别 握手
-					 * 【面试问答】
-					 * Q1: 探索-识别阶段的完整握手流程？
-					 * A: 到识别点（对端发 233，regpoint=1）后 MCU 持续发 222 请求识别 -> 识别模块经
-					 * A: UART4 返回 1 字节种类 -> MCU 进入 Feedback 发 169 应答，对端发 196 清除握手 ->
-					 * A: 重复到规定次数 -> Upload 阶段按记录位姿把种类填回地图，再规划推箱动作。
-					 * ----------------------------------------------------------------------
-					 * Q1: record_pose / allow_recognition 的作用？
-					 * A: 识别时记录当时的位置和朝向，并保证同一位置同一朝向只识别一次（历史去重）；识别
-					 * A: 必须在 0/90/180/270 正朝向上，斜向不触发，保证结果能正确对应到地图格子。
-					 * ----------------------------------------------------------------------
-					 * ====================================================================== */
-					plan_explore_phase2(map_strings);
+					
+
+					sokoban_plan(SOKOBAN_LEVEL_2, SOKOBAN_STAGE_PREPARE, map_strings);
 
 					cmd_received = 1;
 
 					while (cmd_received)
 					{
-						Polling_transmit(explore_commands2);
+						Polling_transmit(sokoban_commands(SOKOBAN_LEVEL_2, SOKOBAN_STAGE_PREPARE));
 					}
 
 					Game_phase = Explore;
@@ -882,12 +772,12 @@ int main(void)
 						break;
 
 					case Upload:
-						update_map2();
-						plan_push_phase2(map_strings);
+						sokoban_apply_vision(SOKOBAN_LEVEL_2, map_strings, vision_stream, stream_counter);
+						sokoban_plan(SOKOBAN_LEVEL_2, SOKOBAN_STAGE_PUSH, map_strings);
 						cmd_received=1;
 						while(cmd_received)
 						{
-							Polling_transmit(push_commands2);
+							Polling_transmit(sokoban_commands(SOKOBAN_LEVEL_2, SOKOBAN_STAGE_PUSH));
 						}
 						Game_phase=Start_push;
 						break;
@@ -902,7 +792,7 @@ int main(void)
 						frame_ready=0;
 						Game_phase=Idle;
 						clear_pose_history();
-						clear_sokoban_memory2();
+						sokoban_reset(SOKOBAN_LEVEL_2);
 						break;						
 					default:
 						Game_phase=Idle;
@@ -931,13 +821,13 @@ int main(void)
 					locked = 0;
 					art1sendvariety = 0;
 					regpoint = 0;
-					plan_bomb_explore_phase3(map_strings);
+					sokoban_plan(SOKOBAN_LEVEL_3, SOKOBAN_STAGE_PREPARE, map_strings);
 
 					cmd_received = 1;
 
 					while (cmd_received)
 					{
-						Polling_transmit(bomb_explore_commands3);
+						Polling_transmit(sokoban_commands(SOKOBAN_LEVEL_3, SOKOBAN_STAGE_PREPARE));
 						system_delay_ms(1);
 					}
 
@@ -989,12 +879,12 @@ int main(void)
 						}
 						break;
 					case Upload:
-						update_map3();
-						plan_push_phase3(map_strings);	// 2
+						sokoban_apply_vision(SOKOBAN_LEVEL_3, map_strings, vision_stream, stream_counter);
+						sokoban_plan(SOKOBAN_LEVEL_3, SOKOBAN_STAGE_PUSH, map_strings);	// 2
 						cmd_received=1;
 						while(cmd_received)
 						{
-							Polling_transmit(level3_commands3);
+							Polling_transmit(sokoban_commands(SOKOBAN_LEVEL_3, SOKOBAN_STAGE_PUSH));
 						}
 						Game_phase=Start_push;
 						break;
@@ -1008,6 +898,7 @@ int main(void)
 					case Completed:
 						frame_ready=0;
 						clear_pose_history();
+						sokoban_reset(SOKOBAN_LEVEL_3);
 						return 0;
 						break;						
 					default:
@@ -1028,15 +919,8 @@ int main(void)
 
 static uint16_t gyro_static_cnt = 0;
 
-/* ======================================================================
- * >> 陀螺在线零偏
- * 【面试问答】
- * Q1: 在线零偏更新的原理？为什么最终注释掉？
- * A: 四个轮子速度都小于 2 个脉冲并持续 1 秒即判定静止，再用 alpha=0.005 的一阶低通
- * A: 缓慢修正零偏以跟踪温漂。但静止判定有误判风险（小车被挡住等），运动中误更新会
- * A: 把真实角速度当零偏扣掉；现场验证后选择"开机校准 + 温度补偿"，故注释保留。
- * ----------------------------------------------------------------------
- * ====================================================================== */
+
+
 void Gyro_Bias_OnlineUpdate(void)
 {
     if(fabsf(M1) < 2&&
@@ -1062,23 +946,8 @@ void Gyro_Bias_OnlineUpdate(void)
     }
 }
 
-/* ======================================================================
- * >> 5ms 实时中断
- * 【面试问答】
- * Q1: 5ms 中断里的执行顺序？
- * A: 读编码器增量 -> 读陀螺 -> 安装角坐标变换 -> 扣零偏 -> 二阶低通 -> 死区置零 ->
- * A: 四元数更新姿态 -> 位置估计（里程计 + 视觉校正）-> 位置/航向级联控制输出车体
- * A: 速度 -> 四轮轮速增量 PI -> PWM 输出。
- * ----------------------------------------------------------------------
- * Q1: 中断执行超过 5ms 会怎样？如何测量耗时？
- * A: 会造成周期抖动、下一拍来不及执行，控制性能下降甚至丢节拍。每步都是 O(1) 运算、
- * A: 不放任何阻塞代码；调试时翻转一个空闲 GPIO，用示波器测高电平宽度即中断实际耗时。
- * ----------------------------------------------------------------------
- * Q1: 角速度死区（0.13/0.14）的作用？
- * A: 静止时陀螺噪声会产生微小非零读数，直接积分会让航向缓慢漂移；小于阈值直接置零，
- * A: 配合零偏扣除保证静止时姿态稳定。
- * ----------------------------------------------------------------------
- * ====================================================================== */
+
+
 void PIT_IRQHandler(void)
 {
 		if(pit_flag_get(PIT_CH0))

@@ -510,6 +510,16 @@
               <FilePath>..\code\sokoban_config.h</FilePath>
             </File>
             <File>
+              <FileName>sokoban.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\sokoban.c</FilePath>
+            </File>
+            <File>
+              <FileName>sokoban.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\sokoban.h</FilePath>
+            </File>
+            <File>
               <FileName>sokoban_map1.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\code\sokoban_map1.c</FilePath>
